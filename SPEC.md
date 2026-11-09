@@ -9,9 +9,9 @@ Simple approved-file transfer from home to office using encrypted artifacts in a
 - Repository: GitHub.com public, named `dead-drop`.
 
 ## Scope
-**In:** explicit source selection; preview and allowlist/exclusion checks; secret/path heuristic checks; encrypted archive; encrypted filenames; local verification; manifest displayed locally; strict Git staging; manual publication approval; download/extraction instructions; automated tests.
+**In:** explicit source selection; preview and allowlist/exclusion checks; secret/path heuristic checks; opt-in inspection of one approved portable UTF-8 source `.tar.gz` plus text companions; encrypted archive; encrypted filenames; local verification including nested source hashes; manifest displayed locally; strict Git staging; manual publication approval; download/extraction instructions; automated tests.
 
-**Out:** hosted website, GitHub Actions handling plaintext, password service, unattended publishing, automatic corporate-policy bypass, storage of plaintext manifests in the public repo, two-way transfer, delete-history guarantees.
+**Out:** hosted website, GitHub Actions handling plaintext, password service, unattended publishing, automatic corporate-policy bypass, opaque/nested archives, arbitrary binaries, recursive directory selection, storage of plaintext manifests in the public repo, two-way transfer, delete-history guarantees.
 
 ## Suggested structure
 ```text

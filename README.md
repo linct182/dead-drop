@@ -56,9 +56,25 @@ Enter and confirm a unique, randomly generated password of **20–128 printable 
 
 Preparation verifies encrypted filenames, wrong-password rejection, archive integrity, and extracted content hashes. Only a verified `.7z` file is copied into `drops/`. Nothing is staged, committed, or pushed by `prepare`.
 
-Supported inputs are nonempty UTF-8 `.txt`, `.md`, `.csv`, `.tsv`, and `.json` files: up to 100 files and 25 MiB total. Archives must also fit 25 MiB. Directories, symlinks, hardlinks, source repositories, unknown formats, and suspicious content are rejected. Metadata, caches, dependency folders, and build outputs are excluded by default. Scanning uses limited patterns and cannot establish that a file is safe or authorized to share.
+Default inputs are nonempty UTF-8 `.txt`, `.md`, `.csv`, `.tsv`, and `.json` files: up to 100 files and 25 MiB total. Archives must also fit 25 MiB. Directories, symlinks, hardlinks, source repositories, unknown formats, and suspicious content are rejected. Metadata, caches, dependency folders, and build outputs are excluded by default. Scanning uses limited patterns and cannot establish that a file is safe or authorized to share.
 
 `drops/` accepts verified encrypted archives only. The manifest and verification receipt stay local under `.git/dead-drop-receipts/`; keep that receipt to publish the archive.
+
+### Approved source packages
+
+For source explicitly approved for public distribution, use the separate opt-in mode:
+
+```sh
+./dead-drop prepare --source-package --source-root /absolute/path/to/approved-files source.tar.gz SHA256SUMS.txt TRANSFER.txt
+```
+
+Select exactly one `.tar.gz` plus optional text companions from a folder outside all repositories. This mode inspects the package's entire member list and every member's UTF-8 content before asking for authorization or a password. It preserves the original package bytes and previews all nested paths, sizes, and hashes. Preparation and publication both recheck the nested manifest after encrypted extraction.
+
+Members may use the normal text extensions plus `.ts`, `.tsx`, `.js`, `.jsx`, `.mjs`, `.cjs`, `.css`, `.sql`, `.sh`, `.html`, `.svg`, `.nvmrc`, and `.gitignore`. The package may contain up to 100 regular files. Links, directory entries, special files, sparse files, nested archives, unsafe Windows paths, duplicate/colliding paths, sensitive/local settings, metadata, dependencies, and build output are rejected. Empty nested text files are supported because the containing tar stream is encrypted.
+
+Use canonical USTAR encoding with owner/group IDs and timestamps zero, empty owner/group names, file modes `0644` or `0755`, and no extended/PAX attributes or optional gzip filename/comment metadata. The tool reconstructs all headers and padding and requires an exact match, so uninspected metadata cannot hide between members. Gzip decompression is bounded; concatenated streams and hidden trailing tar content are rejected. Compressed package bytes, expanded contents, and companions together must fit 25 MiB. If a package needs normalization, create a separately reviewed portable copy outside the repository; this tool never rewrites input packages.
+
+Source scanning uses the same high-confidence credential and quoted-assignment checks as tool implementation files. It still checks personal email patterns. In test source under `tests/`, only literal URL userinfo placeholders `token` and `PRIVATE_SENTINEL` are recognized as fixtures; other userinfo and real email patterns remain blocked. This recognition does not modify original files. Review all source before authorizing it; heuristic scanning cannot establish its ownership or confidentiality. Arbitrary binaries and opaque archive transfers remain unsupported.
 
 ## Publish
 

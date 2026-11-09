@@ -24,6 +24,7 @@ It is **not** a tool to circumvent corporate security controls. Before using it,
 - Detect obvious secrets and sensitive paths and allow a human to review the results. A clean scan is not authorization.
 - Package only explicitly selected source files. Do not recursively package arbitrary directories without previewing the complete manifest.
 - Exclude macOS/Windows metadata, dependency folders, Git internals, caches, and build outputs by default; let user review exclusions.
+- The explicit `prepare --source-package` mode may accept one approved portable `.tar.gz` of UTF-8 source plus optional text companions. Inspect every nested member, path, size, hash and content, with bounded decompression and no tar extraction. Reject links, special/sparse files, unsafe/colliding paths, unknown/nested formats, sensitive/local settings and unreviewed metadata. Preserve original package bytes; never silently sanitize it or allow opaque archives. Keep the complete nested manifest in the local receipt and repeat inspection after encrypted extraction. Source roots must still be outside repositories; public-distribution approval and final publication review remain mandatory.
 - Generate a random non-sensitive archive name, e.g. `drop-2026-11-08-<random>.7z`, and put it in `drops/`.
 - Verify archive integrity and password-protected extraction locally before allowing staging. Never log extracted content or passwords.
 - `git add` only expected encrypted output and approved repo files, never `git add .` indiscriminately.

@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
-"""Local, deliberately narrow approved-text transfer tool. Python 3.9+, POSIX."""
+"""Local approved-text and inspected source-package transfer tool. Python 3.9+, POSIX."""
 import argparse
 import datetime
 import getpass
 import hashlib
+import io
 import json
 import os
 from pathlib import Path
@@ -14,8 +15,10 @@ import shutil
 import stat
 import subprocess
 import sys
+import tarfile
 import tempfile
 import warnings
+import zlib
 
 
 class Refusal(Exception):
@@ -25,6 +28,9 @@ class Refusal(Exception):
 MAX_BYTES = 25 * 1024 * 1024  # both total plaintext and archive, below GitHub limits
 MAX_FILES = 100
 TEXT_TYPES = {".txt", ".md", ".csv", ".tsv", ".json"}
+SOURCE_TYPES = TEXT_TYPES | {".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs",
+                             ".css", ".sql", ".sh", ".html", ".svg"}
+SOURCE_DOTFILES = {".nvmrc", ".gitignore"}
 EXCLUDED = {".git", ".svn", ".hg", "node_modules", "vendor", ".venv", "venv",
             "__pycache__", ".pytest_cache", ".cache", "build", "dist", "target",
             ".ds_store", "thumbs.db", "desktop.ini", "__macosx"}
@@ -191,7 +197,7 @@ def safe_name(name):
         raise Refusal("Use a simple Windows-compatible filename (no paths or special characters).")
 
 
-def inspect_text(name, data, *, payload=True):
+def inspect_text(name, data, *, payload=True, source_fixture=False):
     if payload:
         safe_name(name)
         if SENSITIVE_PATH.search(name):
@@ -208,18 +214,102 @@ def inspect_text(name, data, *, payload=True):
     # high-confidence literal signatures for approved implementation files.
     # The fixed GitHub SSH service username is not a personal email address.
     text = text.replace("git@github.com:", "github.com:")
+    if source_fixture:
+        # Only these explicit dummy URL userinfo values in test source are
+        # recognized as fixtures. Original bytes are never changed. Real email
+        # addresses and all other credential signatures still fail closed.
+        text = re.sub(r"https?://(?:token|PRIVATE_SENTINEL)@(?=[A-Za-z0-9])", "https://", text)
     patterns = SECRET_PATTERNS if payload else [p for i, p in enumerate(SECRET_PATTERNS) if i != 4] + [LITERAL_SECRET]
     if any(pattern.search(text) for pattern in patterns):
         raise Refusal("Secret-like or personal-data pattern found; values are never displayed. Review the original locally.")
 
 
-def snapshot(repo, root, selections, target):
+def source_path(name):
+    if not isinstance(name, str) or not name or len(name) > 240 or "\\" in name:
+        raise Refusal("Unsafe source-package path.")
+    parts = name.split("/")
+    for part in parts:
+        if part not in SOURCE_DOTFILES:
+            safe_name(part)
+        if (part.lower() in EXCLUDED | {".data"} or part.startswith("._") or
+                SENSITIVE_PATH.search(part) or ".local." in part.lower()):
+            raise Refusal("Excluded or sensitive source-package path: " + ascii(name))
+    if Path(name).suffix.lower() not in SOURCE_TYPES and parts[-1] not in SOURCE_DOTFILES:
+        raise Refusal("Unknown source-package member format: " + ascii(name))
+
+
+def inspect_source_package(data):
+    """Inspect bounded gzip/tar bytes in memory; never extract untrusted paths."""
+    try:
+        # Bound decompression itself, including tar headers/padding, before
+        # parsing. Arbitrary archive formats and nested archives are refused.
+        limit = MAX_BYTES + 2 * 1024 * 1024
+        if len(data) < 10 or data[:3] != b"\x1f\x8b\x08" or data[3] != 0:
+            raise Refusal("Source gzip must omit optional filename/comment/extra metadata.")
+        decoder = zlib.decompressobj(wbits=31)
+        raw = decoder.decompress(data, limit + 1)
+        if len(raw) > limit:
+            raise Refusal("Source package exceeds the decompression limit.")
+        if not decoder.eof or decoder.unused_data or decoder.unconsumed_tail:
+            raise Refusal("Truncated or concatenated gzip source package.")
+        manifest, seen, total = [], set(), 0
+        canonical = io.BytesIO()
+        portable = tarfile.open(fileobj=canonical, mode="w", format=tarfile.USTAR_FORMAT)
+        with tarfile.open(fileobj=io.BytesIO(raw), mode="r:") as package:
+            for member in package:
+                if len(manifest) >= MAX_FILES:
+                    raise Refusal("Source package exceeds the 100-member limit.")
+                source_path(member.name)
+                if (not member.isreg() or member.issparse() or member.linkname or
+                        member.mode not in (0o644, 0o755) or member.pax_headers):
+                    raise Refusal("Source package contains links, special files, or unsupported metadata.")
+                if (member.uid != 0 or member.gid != 0 or member.uname or member.gname or
+                        member.mtime != 0):
+                    raise Refusal("Source package must omit owner names/IDs and unsupported timestamp metadata.")
+                if member.name.casefold() in seen:
+                    raise Refusal("Duplicate/case-colliding source-package path.")
+                # Reject file/parent collisions on Windows before extraction.
+                folded = member.name.casefold()
+                if any(folded.startswith(p + "/") or p.startswith(folded + "/") for p in seen):
+                    raise Refusal("Source-package file/directory collision.")
+                seen.add(folded)
+                total += member.size
+                if member.size < 0 or total > MAX_BYTES:
+                    raise Refusal("Source-package contents exceed the 25 MiB limit.")
+                content = package.extractfile(member).read(member.size + 1)
+                if len(content) != member.size:
+                    raise Refusal("Truncated source-package member.")
+                test_source = member.name.startswith("tests/") and (
+                    member.name.endswith((".test.ts", ".test.tsx", ".test.js")) or
+                    Path(member.name).name.startswith("test_"))
+                inspect_text(member.name, content, payload=False, source_fixture=test_source)
+                manifest.append({"name": member.name, "size": len(content), "sha256": digest(content)})
+                header = tarfile.TarInfo(member.name)
+                header.size, header.mode = member.size, member.mode
+                portable.addfile(header, io.BytesIO(content))
+        portable.close()
+        if not manifest:
+            raise Refusal("Empty source package.")
+        # Tar readers normally ignore bytes after the end marker. Refuse hidden
+        # trailing content, concatenated tars and nonzero padding as well.
+        if any(raw[package.offset:]):
+            raise Refusal("Source package contains trailing uninspected content.")
+        if canonical.getvalue() != raw:
+            raise Refusal("Source tar must use canonical USTAR headers and padding with zero metadata.")
+        return sorted(manifest, key=lambda entry: entry["name"])
+    except (tarfile.TarError, OSError, EOFError, ValueError, zlib.error):
+        raise Refusal("Invalid gzip/tar source package; details suppressed.") from None
+
+
+def snapshot(repo, root, selections, target, *, source_package=False):
     root = Path(os.path.abspath(root))
     no_symlinks(root)
     if not root.is_dir() or inside(root, repo):
         raise Refusal("Source root must be an existing directory outside this repository.")
     if not selections or len(selections) > MAX_FILES:
         raise Refusal("Select between 1 and 100 individual files.")
+    if source_package and sum(str(p).endswith(".tar.gz") for p in selections) != 1:
+        raise Refusal("Source-package mode requires exactly one explicitly selected .tar.gz file.")
     manifest, seen, total = [], set(), 0
     for selection in selections:
         relative = Path(selection)
@@ -247,12 +337,22 @@ def snapshot(repo, root, selections, target):
         total += len(data)
         if total > MAX_BYTES:
             raise Refusal("Selected plaintext exceeds the 25 MiB MVP limit.")
-        inspect_text(name, data)
+        members = None
+        if source_package and name.endswith(".tar.gz"):
+            members = inspect_source_package(data)
+            total += sum(e["size"] for e in members)
+            if total > MAX_BYTES:
+                raise Refusal("Selected package and contents exceed the 25 MiB limit.")
+        else:
+            inspect_text(name, data)
         if not data:
             raise Refusal("Empty files have no encrypted data stream; select nonempty text files.")
         (target / name).write_bytes(data)
         os.chmod(target / name, 0o600)
-        manifest.append({"name": name, "size": len(data), "sha256": digest(data)})
+        entry = {"name": name, "size": len(data), "sha256": digest(data)}
+        if members is not None:
+            entry["members"] = members
+        manifest.append(entry)
     if not manifest:
         raise Refusal("No files remain after exclusions.")
     return sorted(manifest, key=lambda entry: entry["name"])
@@ -262,6 +362,12 @@ def show_manifest(manifest, archive):
     print("Local-only manifest (basenames are used inside the archive):")
     for entry in manifest:
         print(" ", ascii(entry["name"]), entry["size"], "bytes SHA256", entry["sha256"])
+        if "members" in entry:
+            print("   Inspected source-package members (paths preserved inside .tar.gz):")
+            for member in entry["members"]:
+                print("    ", ascii(member["name"]), member["size"], "bytes SHA256", member["sha256"])
+            print("   Source scan uses literal credential signatures; test-only dummy URL userinfo")
+            print("   values token and PRIVATE_SENTINEL are recognized. All original bytes are preserved.")
     print("Intended archive:", archive)
     print("Flags:", " ".join(FLAGS), "(password via private stdin pipe)")
     print("Scanner: no heuristic findings. This does not establish authorization or confidentiality.")
@@ -272,7 +378,8 @@ def validate_manifest(manifest):
         raise Refusal("Invalid local verification receipt.")
     seen, total = set(), 0
     for entry in manifest:
-        if not isinstance(entry, dict) or set(entry) != {"name", "size", "sha256"}:
+        if not isinstance(entry, dict) or set(entry) not in ({"name", "size", "sha256"},
+                                                          {"name", "size", "sha256", "members"}):
             raise Refusal("Invalid receipt entry.")
         name, size, sha = entry["name"], entry["size"], entry["sha256"]
         if not isinstance(name, str):
@@ -284,6 +391,24 @@ def validate_manifest(manifest):
             raise Refusal("Invalid receipt hash.")
         seen.add(name.casefold())
         total += size
+        if "members" in entry:
+            if not name.endswith(".tar.gz"):
+                raise Refusal("Only inspected source packages can have nested receipts.")
+            members = entry["members"]
+            if not isinstance(members, list) or not 1 <= len(members) <= MAX_FILES:
+                raise Refusal("Invalid source-package receipt.")
+            names = set()
+            for member in members:
+                if not isinstance(member, dict) or set(member) != {"name", "size", "sha256"}:
+                    raise Refusal("Invalid source member receipt.")
+                source_path(member["name"])
+                nested_name, nested_size, nested_hash = member["name"], member["size"], member["sha256"]
+                if (nested_name.casefold() in names or type(nested_size) is not int or
+                        not 0 <= nested_size <= MAX_BYTES or not isinstance(nested_hash, str) or
+                        not re.fullmatch(r"[0-9a-f]{64}", nested_hash)):
+                    raise Refusal("Invalid source member receipt.")
+                names.add(nested_name.casefold())
+                total += nested_size
     if total > MAX_BYTES:
         raise Refusal("Receipt exceeds plaintext size limit.")
 
@@ -346,7 +471,11 @@ def verify(binary, archive, password, manifest, scratch):
         data = read_file(path)
         if len(data) != entry["size"] or digest(data) != entry["sha256"]:
             raise Refusal("Extracted content hash mismatch.")
-        inspect_text(entry["name"], data)
+        if "members" in entry:
+            if inspect_source_package(data) != entry["members"]:
+                raise Refusal("Extracted source-package manifest mismatch.")
+        else:
+            inspect_text(entry["name"], data)
 
 
 def receipt_directory(repo):
@@ -372,7 +501,7 @@ def load_receipt(repo, data):
     path = receipt_directory(repo) / (sha + ".json")
     no_symlinks(path)
     try:
-        if path.stat().st_size > 50000:
+        if path.stat().st_size > 100000:
             raise ValueError()
         record = json.loads(path.read_text(encoding="utf-8"))
         if record["sha256"] != sha:
@@ -482,7 +611,8 @@ def prepare(repo, args):
         scratch = Path(temp)
         source = scratch / "snapshot"
         source.mkdir(mode=0o700)
-        manifest = snapshot(repo, args.source_root, args.paths, source)
+        manifest = snapshot(repo, args.source_root, args.paths, source,
+                            source_package=getattr(args, "source_package", False))
         name = "drop-" + datetime.date.today().isoformat() + "-" + secrets.token_hex(8) + ".7z"
         relative = "drops/" + name
         show_manifest(manifest, relative)
@@ -627,10 +757,12 @@ def pre_push(repo, binary):
 
 def main(argv=None):
     os.umask(0o077)
-    parser = argparse.ArgumentParser(prog="dead-drop", description="Dead Drop: approved non-confidential text only. No unattended publication.")
+    parser = argparse.ArgumentParser(prog="dead-drop", description="Dead Drop: approved text and inspected source packages. No unattended publication.")
     sub = parser.add_subparsers(dest="command")
     prep = sub.add_parser("prepare", help="Review explicit external files, encrypt and verify; no staging/push")
     prep.add_argument("--source-root", required=True, type=Path)
+    prep.add_argument("--source-package", action="store_true",
+                      help="Inspect one .tar.gz of approved UTF-8 source plus optional text companions")
     prep.add_argument("paths", nargs="+")
     pub = sub.add_parser("publish", help="Reverify, review diff, explicitly approve commit and push")
     pub.add_argument("archive")

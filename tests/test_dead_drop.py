@@ -1,5 +1,6 @@
 """Synthetic fixtures only; real archives stay in auto-cleaned external tempdirs."""
 import contextlib
+import gzip
 import importlib.util
 import io
 import json
@@ -9,6 +10,7 @@ import secrets
 import shutil
 import subprocess
 import tempfile
+import tarfile
 import types
 import unittest
 from unittest import mock
@@ -174,6 +176,134 @@ class SelectionTests(Sandbox):
     def test_repository_local_temporary_root_rejected(self):
         with mock.patch.object(dd.tempfile, "gettempdir", return_value=str(self.repo)), self.assertRaises(dd.Refusal):
             dd.temporary(self.repo)
+
+
+class SourcePackageTests(Sandbox):
+    def package(self, entries=None):
+        output = io.BytesIO()
+        with tarfile.open(fileobj=output, mode="w", format=tarfile.PAX_FORMAT) as archive:
+            for name, data, properties in entries or [("server/main.ts", b"export const count = 3;\n", {})]:
+                member = tarfile.TarInfo(name)
+                member.size = len(data)
+                for key, value in properties.items():
+                    setattr(member, key, value)
+                archive.addfile(member, io.BytesIO(data))
+        return gzip.compress(output.getvalue(), mtime=0)
+
+    def source_snapshot(self, data=None):
+        (self.source / "source.tar.gz").write_bytes(data if data is not None else self.package())
+        return dd.snapshot(self.repo, self.source, ["source.tar.gz", "sample.txt"],
+                           self.scratch, source_package=True)
+
+    def test_explicit_mode_required_and_original_bytes_preserved(self):
+        data = self.package()
+        manifest = self.source_snapshot(data)
+        self.assertEqual([e["name"] for e in manifest], ["sample.txt", "source.tar.gz"])
+        self.assertEqual(manifest[1]["members"][0]["name"], "server/main.ts")
+        self.assertEqual((self.scratch / "source.tar.gz").read_bytes(), data)
+        self.assertEqual((self.source / "source.tar.gz").read_bytes(), data)
+        dd.validate_manifest(manifest)
+        with self.assertRaises(dd.Refusal):
+            dd.snapshot(self.repo, self.source, ["source.tar.gz"], self.scratch)
+        for paths in (["sample.txt"], ["source.tar.gz", "source.tar.gz"]):
+            with self.assertRaises(dd.Refusal):
+                dd.snapshot(self.repo, self.source, paths, self.scratch, source_package=True)
+
+    def test_nested_paths_unknown_formats_exclusions_and_metadata_blocked(self):
+        names = ["../escape.ts", "/absolute.ts", "a/../escape.ts", "a//main.ts", "a\\main.ts",
+                 "CON.ts", "a:stream.ts", "server/.env", "config/office.local.json",
+                 ".git/config", "node_modules/main.ts", ".data/report.json", "._main.ts",
+                 "payload.tar.gz", "binary.pdf", "AUX/main.ts"]
+        for name in names:
+            with self.subTest(name=name), self.assertRaises(dd.Refusal):
+                dd.inspect_source_package(self.package([(name, b"synthetic", {})]))
+        properties = [{"type": tarfile.SYMTYPE, "linkname": "outside"},
+                      {"type": tarfile.LNKTYPE, "linkname": "outside"},
+                      {"type": tarfile.DIRTYPE}, {"type": tarfile.FIFOTYPE},
+                      {"type": tarfile.CHRTYPE}, {"mode": 0o4755},
+                      {"uname": "Synthetic"}, {"uid": 501}, {"mtime": 1},
+                      {"pax_headers": {"comment": "uninspected"}},
+                      {"pax_headers": {"mtime": "uninspected"}},
+                      {"pax_headers": {"SCHILY.xattr.synthetic": "uninspected"}}]
+        for props in properties:
+            with self.subTest(properties=props), self.assertRaises(dd.Refusal):
+                dd.inspect_source_package(self.package([("server/main.ts", b"synthetic", props)]))
+
+    def test_duplicate_case_and_parent_collisions(self):
+        for names in [("main.ts", "main.ts"), ("Main.ts", "main.ts"),
+                      ("main.ts", "main.ts/child.ts"), ("main.ts/child.ts", "main.ts")]:
+            with self.subTest(names=names), self.assertRaises(dd.Refusal):
+                dd.inspect_source_package(self.package([(n, b"synthetic", {}) for n in names]))
+
+    def test_nested_content_scan_and_narrow_fixture_recognition(self):
+        for content in (b"bad\x00text", b"not utf8\xff", ("gh" + "p_" + "a" * 36).encode(),
+                        ("person" + "@example.invalid").encode(),
+                        ("pass" + "word = '" + secrets.token_hex(24) + "'").encode()):
+            with self.subTest(category=len(content)), self.assertRaises(dd.Refusal):
+                dd.inspect_source_package(self.package([("tests/main.test.ts", content, {})]))
+        for marker in ("token", "PRIVATE_SENTINEL"):
+            content = ("const invalid = 'https://" + marker + "@" + "git.example.test/api';").encode()
+            members = dd.inspect_source_package(self.package([("tests/main.test.ts", content, {})]))
+            self.assertEqual(members[0]["sha256"], dd.digest(content))
+            with self.assertRaises(dd.Refusal):
+                dd.inspect_source_package(self.package([("server/main.ts", content, {})]))
+        content = ("const invalid = 'https://" + secrets.token_hex(24) + "@" + "git.example.test/api';").encode()
+        with self.assertRaises(dd.Refusal):
+            dd.inspect_source_package(self.package([("tests/main.test.ts", content, {})]))
+
+    def test_empty_invalid_trailing_and_concatenated_archives(self):
+        empty = io.BytesIO()
+        with tarfile.open(fileobj=empty, mode="w"):
+            pass
+        original = self.package()
+        trailing = gzip.compress(gzip.decompress(original) + b"hidden", mtime=0)
+        for data in (b"not gzip", original[:-8], original + original, trailing,
+                     gzip.compress(empty.getvalue(), mtime=0)):
+            with self.subTest(length=len(data)), self.assertRaises(dd.Refusal):
+                dd.inspect_source_package(data)
+        named = io.BytesIO()
+        with gzip.GzipFile(filename="uninspected", fileobj=named, mode="wb") as handle:
+            handle.write(gzip.decompress(original))
+        with self.assertRaises(dd.Refusal):
+            dd.inspect_source_package(named.getvalue())
+        # Content hidden in padding or otherwise-unused header bytes is not
+        # covered by tarfile's member view; canonical reconstruction rejects it.
+        raw = bytearray(gzip.decompress(original))
+        raw[512 + len(b"export const count = 3;\n")] = 65
+        with self.assertRaises(dd.Refusal):
+            dd.inspect_source_package(gzip.compress(raw, mtime=0))
+
+    def test_limits_cover_decompression_members_and_combined_bytes(self):
+        with mock.patch.object(dd, "MAX_FILES", 1), self.assertRaises(dd.Refusal):
+            dd.inspect_source_package(self.package([("a.ts", b"a", {}), ("b.ts", b"b", {})]))
+        with mock.patch.object(dd, "MAX_BYTES", 5), self.assertRaises(dd.Refusal):
+            dd.inspect_source_package(self.package())
+        bomb = gzip.compress(b"\0" * (3 * 1024 * 1024))
+        with mock.patch.object(dd, "MAX_BYTES", 5), self.assertRaises(dd.Refusal):
+            dd.inspect_source_package(bomb)
+        # Compressed payload and uncompressed members both contribute to the limit.
+        with mock.patch.object(dd, "MAX_BYTES", 200), self.assertRaises(dd.Refusal):
+            self.source_snapshot(self.package([("a.ts", b"a" * 150, {})]))
+
+    @unittest.skipUnless(shutil.which("7zz"), "Official 7zz required for integration tests")
+    def test_real_source_prepare_receipt_extraction_and_tampering(self):
+        data = self.package()
+        (self.source / "source.tar.gz").write_bytes(data)
+        args = types.SimpleNamespace(source_root=self.source, paths=["source.tar.gz", "sample.txt"], source_package=True)
+        with mock.patch.object(dd, "consent"), mock.patch.object(dd, "read_password", return_value=self.password), contextlib.redirect_stdout(io.StringIO()):
+            dd.prepare(self.repo, args)
+        archive = next((self.repo / "drops").glob("*.7z"))
+        manifest = dd.load_receipt(self.repo, archive.read_bytes())
+        dd.verify(dd.sevenzip(), archive, self.password, manifest, self.base)
+        self.assertEqual(dd.changed_index(self.repo), set())
+        self.assertFalse((self.repo / "source.tar.gz").exists())
+        self.assertEqual((self.source / "source.tar.gz").read_bytes(), data)
+        dd.worktree_check(self.repo, dd.sevenzip())
+        self.git("add", "--", str(archive.relative_to(self.repo)))
+        dd.audit_index(self.repo, dd.sevenzip())
+        manifest[1]["members"][0]["sha256"] = "0" * 64
+        with tempfile.TemporaryDirectory(dir=self.base) as scratch, self.assertRaises(dd.Refusal):
+            dd.verify(dd.sevenzip(), archive, self.password, manifest, Path(scratch))
 
 
 @unittest.skipUnless(shutil.which("7zz"), "Official 7zz required for integration tests")
