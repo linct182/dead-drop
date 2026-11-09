@@ -29,7 +29,7 @@ EXCLUDED = {".git", ".svn", ".hg", "node_modules", "vendor", ".venv", "venv",
             "__pycache__", ".pytest_cache", ".cache", "build", "dist", "target",
             ".ds_store", "thumbs.db", "desktop.ini", "__macosx"}
 APPROVED = {"AGENTS.md", "SPEC.md", "CODEX_HANDOFF.md", "README.md", "SECURITY.md", "LICENSE",
-            ".gitignore", "drops/.gitkeep", "scripts/dead-drop", "scripts/dead_drop.py",
+            ".gitignore", "drops/.gitkeep", "dead-drop", "scripts/dead-drop", "scripts/dead_drop.py",
             "tests/test_dead_drop.py", ".githooks/pre-commit", ".githooks/pre-push"}
 DROP_RE = re.compile(r"drops/drop-\d{4}-\d{2}-\d{2}-[0-9a-f]{16}\.7z\Z")
 SAFE_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9_. -]{0,99}\Z")
@@ -627,7 +627,7 @@ def pre_push(repo, binary):
 
 def main(argv=None):
     os.umask(0o077)
-    parser = argparse.ArgumentParser(description="Dead Drop: approved non-confidential text only. No unattended publication.")
+    parser = argparse.ArgumentParser(prog="dead-drop", description="Dead Drop: approved non-confidential text only. No unattended publication.")
     sub = parser.add_subparsers(dest="command")
     prep = sub.add_parser("prepare", help="Review explicit external files, encrypt and verify; no staging/push")
     prep.add_argument("--source-root", required=True, type=Path)

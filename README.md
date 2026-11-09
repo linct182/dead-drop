@@ -28,17 +28,26 @@ Preparation runs on macOS with Python 3.9+, Git, and official `7zz`. No addition
 ```sh
 brew install sevenzip
 git config core.hooksPath .githooks
-./scripts/dead-drop check
+./dead-drop check
 ```
 
 Repeat hook setup after cloning. The local hooks check staged files and outgoing history; they are safeguards against mistakes, not a server-side security policy.
+
+Run commands from your repository. To shorten them further to `dead-drop` in the current terminal, run this from the repository root:
+
+```sh
+alias dead-drop="$PWD/dead-drop"
+dead-drop check
+```
+
+The alias lasts for this terminal session. The original `./scripts/dead-drop` launcher also remains available.
 
 ## Prepare
 
 Keep source files outside the repository and select individual files relative to their source folder:
 
 ```sh
-./scripts/dead-drop prepare --source-root /absolute/path/to/approved-files sample.md
+./dead-drop prepare --source-root /absolute/path/to/approved-files sample.md
 ```
 
 The tool scans a private snapshot and displays a local manifest, archive name, exclusions, and encryption flags. Review the selection and type `AUTHORIZED` to confirm the required permissions. Originals remain untouched.
@@ -54,8 +63,8 @@ Supported inputs are nonempty UTF-8 `.txt`, `.md`, `.csv`, `.tsv`, and `.json` f
 ## Publish
 
 ```sh
-./scripts/dead-drop check
-./scripts/dead-drop publish drops/drop-DATE-RANDOM.7z
+./dead-drop check
+./dead-drop publish drops/drop-DATE-RANDOM.7z
 ```
 
 Replace the placeholder with the prepared archive's actual name. Enter its saved password to repeat verification, review the manifest, encryption flags, destination, branch, and Git diff, then type **`PUBLISH`** to approve the commit and push.
@@ -71,7 +80,7 @@ A public repository normally needs no GitHub sign-in to download. The archive pa
 ## Details
 
 ```sh
-./scripts/dead-drop help
+./dead-drop help
 python3 -m unittest discover -s tests -v
 ```
 
