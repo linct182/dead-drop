@@ -2,76 +2,79 @@
 
 **Leave it here. Pick it up elsewhere.**
 
-Dead Drop is a minimal, security-conscious workflow for depositing *approved, non-confidential* files in a public GitHub repository from home, and downloading them at an office computer where GitHub.com public repositories can be browsed without signing in.
+A small local CLI for packaging selected files into encrypted archives and sharing them through GitHub. Archives use 7z AES-256 encryption, including encrypted filenames, and are verified locally before publication.
 
-## Basic workflow
+Use only non-confidential files approved for public distribution through an authorized sharing channel. Anyone can download a public archive, and Git history can retain it after deletion. Encryption does not grant permission to share restricted material.
 
-1. At home (macOS), select approved files **outside** the repository.
-2. A local tool inspects and previews selected files, then creates an encrypted `.7z` archive with AES-256 and encrypted filenames.
-3. Verify the archive locally and review what will be published.
-4. With explicit confirmation, commit and push **only the encrypted archive** to `drops/`.
-5. At the office (Windows), browse the public repository, download the `.7z` file, and extract with a compatible 7-Zip application using the password.
+## Create your own copy
 
-GitHub does **not** provide download-password gates for public repository files. Anyone can download the encrypted archive; the password is required to extract it. Ensure that the office environment permits the transfer and has an approved archive extractor.
+Open [dead-drop-template](https://github.com/linct182/dead-drop-template), select **Use this template → Create a new repository**, and create a repository named **`dead-drop`** under your own account. The current CLI requires that repository name. The template contains the tool and an empty `drops/` folder, with no transfer archives or local receipts.
 
-## Safety boundaries
+Clone your new repository and run setup inside it:
 
-Encryption is **not** authorization to share restricted content. Never upload company code, confidential documents, credentials, sensitive personal information, or unapproved content. Git history may preserve old files even after deletion, and encrypted contents remain publicly downloadable indefinitely.
+```sh
+git clone https://github.com/YOUR-USERNAME/dead-drop.git
+cd dead-drop
+```
 
-## Setup on macOS
+Replace `YOUR-USERNAME` with your GitHub username. Your `origin` should point to your own repository. Use the visibility and sharing channel authorized for your files; anonymous downloads require a public repository.
 
-Requires Python 3.9+, Git, and official `7zz` (Homebrew's `sevenzip`). No Python packages, service, or GitHub Actions are needed.
+## Setup
+
+Preparation runs on macOS with Python 3.9+, Git, and official `7zz`. No additional Python packages are required.
 
 ```sh
 brew install sevenzip
 git config core.hooksPath .githooks
-./scripts/dead-drop help
 ./scripts/dead-drop check
-python3 -m unittest discover -s tests -v
 ```
 
-The executable hooks reject non-allowlisted staged paths, secret signatures, unverified new archives, and unsafe outgoing history. Hook configuration is local: repeat setup after cloning. A missing `7zz` fails closed. Hooks are a local guard, not a server policy; Git users can bypass them. Use the CLI and review changes to the implementation separately.
+Repeat hook setup after cloning. The local hooks check staged files and outgoing history; they are safeguards against mistakes, not a server-side security policy.
 
-## Prepare a drop
+## Prepare
 
-First establish that **both public distribution and this home-to-office transfer channel are authorized**. Keep the originals outside this repository. The MVP accepts only nonempty UTF-8 `.txt`, `.md`, `.csv`, `.tsv`, and `.json` files; unknown/binary formats, source repositories, suspicious paths, secret patterns, email addresses, and obvious personal identifiers are blocked. These checks are intentionally conservative and incomplete.
+Keep source files outside the repository and select individual files relative to their source folder:
 
 ```sh
-./scripts/dead-drop prepare --source-root /absolute/path/to/approved-files notes.txt table.csv
+./scripts/dead-drop prepare --source-root /absolute/path/to/approved-files sample.md
 ```
 
-Select individual files relative to the source root; directories, absolute selections, `..`, symlinks, hardlinks, and device files are rejected. Nested selections are flattened to basenames, with case-insensitive duplicates and unsafe Windows names rejected. Metadata, dependency folders, caches, Git internals, and build outputs are excluded by default and reported if selected. Files inside another Git/Mercurial/Subversion repository are rejected. The limit is 100 files and 25 MiB total plaintext; encrypted artifacts also must fit 25 MiB. There is no Git LFS fallback.
+The tool scans a private snapshot and displays a local manifest, archive name, exclusions, and encryption flags. Review the selection and type `AUTHORIZED` to confirm the required permissions. Originals remain untouched.
 
-The CLI snapshots the selected files into a private temporary directory outside the repository, scans that snapshot, and shows the full local manifest (basename, size, SHA-256), exclusions, exact archive name, and encryption flags. Review it, then type `AUTHORIZED` only if you have the necessary authorization. There is no override for a blocked scan. The tool never modifies originals or silently redacts them.
+Enter and confirm a unique, randomly generated password of **20–128 printable ASCII characters**. Keep it in your approved password manager; it cannot be recovered by the tool. Enter it only at the private terminal prompt, never in commands, repository files, or logs. Terminal input is hidden and passwords reach `7zz` through a private stdin pipe.
 
-Enter and confirm a **unique, randomly generated** password of 20–128 printable ASCII characters, or an equally strong randomly generated multiword passphrase. The length/repetition checks cannot establish entropy or uniqueness. Use a policy-approved password manager and retain it securely; the CLI has no recovery service. Passwords are read with no echo, stay in process memory, and reach `7zz` through a private stdin pipe. Never put the password in command arguments, environment variables, a script, a repo file, or this chat. Piped/noninteractive user input is rejected.
+Preparation verifies encrypted filenames, wrong-password rejection, archive integrity, and extracted content hashes. Only a verified `.7z` file is copied into `drops/`. Nothing is staged, committed, or pushed by `prepare`.
 
-Creation uses `-t7z -m0=lzma2 -mx=3 -mmt=2 -mhe=on -p`. The CLI verifies password-required headers, wrong-password rejection, an integrity test, AES-encrypted member metadata, exact member names/sizes, and byte-identical password-protected extraction. Only then does it copy a randomly named `drops/drop-DATE-RANDOM.7z` into the repository. Temporary plaintext is removed on success, ordinary failure, Ctrl-C, and SIGTERM. No files are staged, committed, or pushed by `prepare`.
+Supported inputs are nonempty UTF-8 `.txt`, `.md`, `.csv`, `.tsv`, and `.json` files: up to 100 files and 25 MiB total. Archives must also fit 25 MiB. Directories, symlinks, hardlinks, source repositories, unknown formats, and suspicious content are rejected. Metadata, caches, dependency folders, and build outputs are excluded by default. Scanning uses limited patterns and cannot establish that a file is safe or authorized to share.
 
-A private local receipt containing the archive hash and reviewed manifest is kept under `.git/dead-drop-receipts/`, with directory/file modes 0700/0600. It contains no password, source paths, or file contents and is never committed. It does contain member names and hashes: protect your local Git metadata and backups. Loss of the receipt requires preparing a new archive; manually copied archives are refused. Linked worktrees use Git's resolved metadata path.
+`drops/` accepts verified encrypted archives only. The manifest and verification receipt stay local under `.git/dead-drop-receipts/`; keep that receipt to publish the archive.
 
-## Review and publish
-
-Review and commit implementation changes separately before publishing a payload. `publish` requires a clean tracked working tree, an empty index, enabled hooks, and local HEAD equal to the existing origin branch. It will not publish earlier local commits incidentally. Origin must use one matching fetch/push URL for a GitHub repository named `dead-drop`, without embedded credentials. Git authentication uses your normal approved Git setup; no tokens belong in this repository.
+## Publish
 
 ```sh
 ./scripts/dead-drop check
 ./scripts/dead-drop publish drops/drop-DATE-RANDOM.7z
 ```
 
-Replace the placeholder with the actual prepared filename. `publish` checks the local receipt and ciphertext hash, asks for the archive password again, repeats verification in external temporary storage, and displays the manifest, flags, origin, branch, and staged Git diff. It stages **only** that encrypted archive. The final prompt requires the exact phrase `PUBLISH drop-DATE-RANDOM.7z` using its actual name. Only this approval permits commit and a normal push of that branch. Declining or failing before commit unstages the tool's archive. If push fails after commit, the commit remains local; inspect the remote and Git status before deciding what to do next.
+Replace the placeholder with the prepared archive's actual name. Enter its saved password to repeat verification, review the manifest, encryption flags, destination, branch, and Git diff, then type **`PUBLISH`** to approve the commit and push.
 
-Do not use `git add .`. `check` also rejects unexpected untracked and ignored files (including plaintext hidden by `.gitignore`), allowing only the exact implementation paths, encrypted drops, and normal Python/OS metadata. The pre-commit hook audits the **index blobs**, so replacing a staged secret with a clean working copy does not hide it. The pre-push hook checks every outgoing commit tree and scans commit messages, including deleted historical files, and requires local receipts for outgoing archives. Only branch updates pointing directly to commits are supported; tags and other refs are rejected because annotations and raw objects can carry content outside the checked trees. It may conservatively refuse a clone whose outgoing history includes archives without local receipts.
+Publication requires enabled hooks, an empty index, a clean tracked working tree, and local HEAD matching the existing origin branch. Review and synchronize implementation changes separately. Only the selected encrypted archive is staged; avoid `git add .`. Declining before commit unstages it. If a push fails after commit, inspect Git status and the remote before retrying.
 
-## Retrieve on Windows
+## Download
 
-1. Confirm office policy permits this transfer and a compatible extractor. Use a policy-approved current 7-Zip installation; this tool does not install or bypass office software restrictions.
-2. In the browser, open the public GitHub `dead-drop` repository, open `drops/`, and select the exact `.7z` file. Use **Download raw file** (or the download control on the file page). A public repository normally requires no GitHub login. Office access controls may still prevent access; stop if they do.
-3. Open the downloaded `.7z` in 7-Zip, select an approved extraction destination, and enter the archive password when prompted. Encrypted filenames also require the password to list the files.
-4. Retrieve the password through your separately approved password-management/channel process. Do not publish it beside the archive. Do not return office/company files through this workflow.
+Open `drops/` on GitHub, select the archive, and choose **Download raw file**. Open it with an approved 7-Zip-compatible extractor and enter the saved archive password. Filenames are also password-protected. Follow the access and software policies of the receiving environment.
 
-GitHub's **Download ZIP** is a repository snapshot, not a password-protected download. If you use it, the encrypted `.7z` inside still requires its own password. GitHub itself provides no password gate. Local CLI archive checks are automated; the actual Windows browser/extractor workflow must be checked on an authorized office machine.
+A public repository normally needs no GitHub sign-in to download. The archive password is separate from GitHub authentication. GitHub's **Download ZIP** is an unencrypted repository snapshot; any `.7z` inside still requires its own password. Keep passwords in a separately approved password manager or sharing channel.
 
-## Limits and maintenance
+## Details
 
-See [SECURITY.md](SECURITY.md) for the design audit, tested password behavior, and limitations. New formats or repository paths require a reviewed code change to the explicit allowlists. A clean scan is never proof of permission. All public history should be treated as permanent; deleting a drop does not recall it.
+```sh
+./scripts/dead-drop help
+python3 -m unittest discover -s tests -v
+```
+
+See [SECURITY.md](SECURITY.md) for the security design, password-handling behavior, and platform limitations. Deleting an archive does not recall copies or remove it from public history.
+
+## License
+
+The tool and its documentation are available under the [MIT license](LICENSE). You may use, modify, and redistribute them while retaining the copyright and license notices. Transfer payloads in `drops/` are not covered by this software license; their own permissions and terms apply.

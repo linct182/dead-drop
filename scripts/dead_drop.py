@@ -28,7 +28,7 @@ TEXT_TYPES = {".txt", ".md", ".csv", ".tsv", ".json"}
 EXCLUDED = {".git", ".svn", ".hg", "node_modules", "vendor", ".venv", "venv",
             "__pycache__", ".pytest_cache", ".cache", "build", "dist", "target",
             ".ds_store", "thumbs.db", "desktop.ini", "__macosx"}
-APPROVED = {"AGENTS.md", "SPEC.md", "CODEX_HANDOFF.md", "README.md", "SECURITY.md",
+APPROVED = {"AGENTS.md", "SPEC.md", "CODEX_HANDOFF.md", "README.md", "SECURITY.md", "LICENSE",
             ".gitignore", "drops/.gitkeep", "scripts/dead-drop", "scripts/dead_drop.py",
             "tests/test_dead_drop.py", ".githooks/pre-commit", ".githooks/pre-push"}
 DROP_RE = re.compile(r"drops/drop-\d{4}-\d{2}-\d{2}-[0-9a-f]{16}\.7z\Z")
@@ -574,7 +574,7 @@ def publish(repo, args):
         # Only a single known encrypted binary is staged, so this diff contains no member names.
         print(git(repo, "diff", "--cached", "--no-ext-diff", "--no-textconv", "--stat", "--", relative).stdout.decode())
         print(git(repo, "diff", "--cached", "--no-ext-diff", "--no-textconv", "--", relative).stdout.decode())
-        consent("PUBLISH " + archive.name, "Commit and push this archive to PUBLIC GitHub? It may remain public permanently.")
+        consent("PUBLISH", "Commit and push this archive to PUBLIC GitHub? It may remain public permanently.")
         worktree_check(repo, binary)
         if (digest(read_file(archive)) != original_hash or changed_index(repo) != {relative} or
                 git(repo, "rev-parse", "HEAD").stdout.strip() != head or

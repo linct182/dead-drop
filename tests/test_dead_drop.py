@@ -361,11 +361,12 @@ class ArchiveAndGitTests(Sandbox):
         (self.repo / "scripts").mkdir()
         (self.repo / ".githooks").mkdir()
         shutil.copyfile(PROJECT / "scripts/dead_drop.py", self.repo / "scripts/dead_drop.py")
+        shutil.copyfile(PROJECT / "LICENSE", self.repo / "LICENSE")
         hook = self.repo / ".githooks/pre-commit"
         shutil.copyfile(PROJECT / ".githooks/pre-commit", hook)
         hook.chmod(0o755)
         self.git("config", "core.hooksPath", ".githooks")
-        self.git("add", "--", "scripts/dead_drop.py", ".githooks/pre-commit")
+        self.git("add", "--", "scripts/dead_drop.py", ".githooks/pre-commit", "LICENSE")
         self.git("commit", "-qm", "approved synthetic implementation")
         (self.repo / "raw.txt").write_text("synthetic plaintext")
         self.git("add", "--", "raw.txt")
@@ -422,13 +423,20 @@ class ArchiveAndGitTests(Sandbox):
         self.configure_publish()
         self.artifact()
         calls, confirmations = [], []
+        output = io.StringIO()
         def approve(phrase, message):
             self.assertFalse(any(call[0] in ("commit", "push") for call in calls))
             self.assertEqual(dd.changed_index(self.repo), {self.name})
+            review = output.getvalue()
+            self.assertIn("Local-only manifest", review)
+            self.assertIn("sample.txt", review)
+            self.assertIn("Intended archive: " + self.name, review)
+            self.assertIn("Flags: " + " ".join(dd.FLAGS), review)
+            self.assertIn("diff --git", review)
             confirmations.append(phrase)
-        with mock.patch.object(dd, "git", side_effect=self.publish_git(calls)), mock.patch.object(dd, "read_password", return_value=self.password), mock.patch.object(dd, "consent", side_effect=approve), contextlib.redirect_stdout(io.StringIO()):
+        with mock.patch.object(dd, "git", side_effect=self.publish_git(calls)), mock.patch.object(dd, "read_password", return_value=self.password), mock.patch.object(dd, "consent", side_effect=approve), contextlib.redirect_stdout(output):
             dd.publish(self.repo, types.SimpleNamespace(archive=self.name))
-        self.assertEqual(confirmations, ["PUBLISH " + Path(self.name).name])
+        self.assertEqual(confirmations, ["PUBLISH"])
         self.assertEqual([call[0] for call in calls if call[0] in ("commit", "push")], ["commit", "push"])
         push = next(call for call in calls if call[0] == "push")
         self.assertIn("--no-follow-tags", push)
