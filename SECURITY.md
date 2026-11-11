@@ -1,6 +1,6 @@
 # Security design audit
 
-Dead Drop is for approved, non-confidential home-to-office material only. Its operator must independently confirm that publishing and downloading over public GitHub is authorized. Encryption does not grant permission to distribute restricted content. The CLI requires that confirmation for every preparation and a separate final approval for publication.
+Dead Drop supports one-way transfer of approved, non-confidential files. Its operator must independently confirm that publishing and downloading over public GitHub is authorized. Encryption does not grant permission to distribute restricted content. The CLI requires that confirmation for every preparation and a separate final approval for publication.
 
 ## Chosen boundary
 
@@ -36,7 +36,7 @@ Primary references: [7z format and AES-256](https://www.7-zip.org/7z.html), [off
 - Local receipts are trusted user-owned metadata, not signed attestations. A local attacker who can rewrite code, Git configuration, or receipts controls the workflow. Do not run concurrent Git mutations during prepare/publish. SHA-256 pins and final index/HEAD checks catch ordinary changes but do not provide an atomic transaction against hostile concurrent processes.
 - Temporary directories use mode 0700 and files use restrictive modes. Normal completion, exceptions, Ctrl-C, and SIGTERM clean them up. SIGKILL, power loss, filesystem snapshots, backups, and SSD behavior can leave recoverable plaintext; deletion is not secure erasure. Use an appropriately protected personal host and encrypted storage. Never use a repository-local TMPDIR.
 - GitHub's practical limits are handled conservatively at 25 MiB per artifact/total plaintext and 100 members per selected file list or source package. Source-package accounting includes both compressed bytes and expanded contents. No Git LFS or repository-size lifecycle service is introduced. Repeated drops accumulate public history. Unknown formats fail closed rather than being silently scanned incompletely.
-- A successful push is not a policy decision. The office browser, network rules, approved extractor, and anonymous download behavior must be verified in the authorized environment. There is no bypass for DLP, authentication, proxy, or download restrictions.
+- Verify browser access, network rules, extractor approval, and anonymous download behavior in the receiving environment. Respect all DLP, authentication, proxy, and download restrictions.
 
 ## Validation
 

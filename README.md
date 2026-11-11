@@ -2,7 +2,7 @@
 
 **Pack it. Lock it. Drop it.**
 
-Your files. Your call. Dead Drop turns selected files into a verified, AES-256 encrypted `.7z` archive—with filenames locked, too. Review the manifest, give the green light, and publish the drop.
+Your files. Your call. Dead Drop packages selected files for one-way transfer in a verified, AES-256 encrypted `.7z` archive. Filenames are encrypted too. Review the manifest, give the green light, and publish the drop.
 
 Pick it up from GitHub and unlock it with your saved archive password.
 

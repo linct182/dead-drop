@@ -34,7 +34,7 @@ SOURCE_DOTFILES = {".nvmrc", ".gitignore"}
 EXCLUDED = {".git", ".svn", ".hg", "node_modules", "vendor", ".venv", "venv",
             "__pycache__", ".pytest_cache", ".cache", "build", "dist", "target",
             ".ds_store", "thumbs.db", "desktop.ini", "__macosx"}
-APPROVED = {"AGENTS.md", "SPEC.md", "CODEX_HANDOFF.md", "README.md", "SECURITY.md", "LICENSE",
+APPROVED = {"AGENTS.md", "README.md", "SECURITY.md", "LICENSE",
             ".gitignore", "drops/.gitkeep", "dead-drop", "scripts/dead-drop", "scripts/dead_drop.py",
             "tests/test_dead_drop.py", ".githooks/pre-commit", ".githooks/pre-push"}
 DROP_RE = re.compile(r"drops/drop-\d{4}-\d{2}-\d{2}-[0-9a-f]{16}\.7z\Z")
@@ -616,8 +616,8 @@ def prepare(repo, args):
         name = "drop-" + datetime.date.today().isoformat() + "-" + secrets.token_hex(8) + ".7z"
         relative = "drops/" + name
         show_manifest(manifest, relative)
-        consent("AUTHORIZED", "Confirm both public distribution and home-to-office download through public GitHub are approved.\n"
-                "Encryption is defense in depth. Never use this for restricted material or to bypass office controls.")
+        consent("AUTHORIZED", "Confirm that both public distribution and download through public GitHub are authorized.\n"
+                "Encryption is defense in depth. Never use this for restricted material or to bypass security controls.")
         password = read_password(confirm=True)
         archive = scratch / name
         archive_command(binary, ["a", *FLAGS, "--", str(archive), *[e["name"] for e in manifest]], source, password)

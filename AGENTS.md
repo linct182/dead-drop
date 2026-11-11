@@ -1,7 +1,7 @@
 # Dead Drop — Agent Instructions
 
 ## Purpose
-Dead Drop is a lightweight, public GitHub repository for transferring *approved, non-confidential* files from a personal home environment to an office environment where public GitHub pages can be browsed but signing into a personal GitHub.com account may not be possible.
+Dead Drop supports one-way transfer of *approved, non-confidential* files through public GitHub. Recipients can download encrypted archives without signing in.
 
 It is **not** a tool to circumvent corporate security controls. Before using it, the operator must confirm that publishing and downloading the relevant material through public GitHub is authorized. If authorization is unclear, stop and ask.
 
@@ -15,7 +15,7 @@ It is **not** a tool to circumvent corporate security controls. Before using it,
 7. Use a unique, high-entropy password or passphrase; never hardcode a default. Avoid placing password values on CLI command lines if they could be visible to other processes. Verify the installed 7z implementation's secure password prompt behavior and document platform limitations.
 8. Never automatically push. Show a manifest, flags, intended archive name, and tracked-file diff, then require explicit human approval.
 9. For suspicious, unknown, or likely confidential content, fail closed; don't silently redact or rewrite original user files. Do not claim automated scanning proves data is safe.
-10. Do not use this repository as a bridge for office-to-home company files or as a workaround for DLP, sign-in, proxy, or access restrictions.
+10. Do not use this repository as a return channel or as a workaround for DLP, sign-in, proxy, or access restrictions.
 
 ## Design requirements
 - Keep original source files outside the repository and untouched.

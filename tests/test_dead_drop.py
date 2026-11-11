@@ -453,8 +453,8 @@ class ArchiveAndGitTests(Sandbox):
         with self.assertRaises(dd.Refusal):
             dd.audit_index(self.repo, dd.sevenzip())
         self.git("reset", "-q", "HEAD", "--", self.name)
-        (self.repo / "SPEC.md").symlink_to(self.sample)
-        self.git("add", "--", "SPEC.md")
+        (self.repo / "SECURITY.md").symlink_to(self.sample)
+        self.git("add", "--", "SECURITY.md")
         with self.assertRaises(dd.Refusal):
             dd.audit_index(self.repo, dd.sevenzip())
 
@@ -511,7 +511,7 @@ class ArchiveAndGitTests(Sandbox):
         with self.assertRaises(dd.Refusal):
             dd.worktree_check(self.repo, dd.sevenzip())
         (self.repo / "payload.env").unlink()
-        (self.repo / "SPEC.md").symlink_to(self.sample)
+        (self.repo / "SECURITY.md").symlink_to(self.sample)
         with self.assertRaises(dd.Refusal):
             dd.worktree_check(self.repo, dd.sevenzip())
 
